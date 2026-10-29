@@ -6,8 +6,8 @@ android {
         applicationId 'com.blockhead.lumaframe'
         minSdk 28
         targetSdk 35
-        versionCode 6
-        versionName '1.2.3'
+        versionCode 7
+        versionName '1.2.4'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

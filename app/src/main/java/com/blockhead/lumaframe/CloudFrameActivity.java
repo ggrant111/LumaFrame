@@ -318,7 +318,7 @@ public class CloudFrameActivity extends Activity {
       monthGrid = column();
       calendarCard.addView(monthGrid);
       renderMonth();
-      LinearLayout agendaCard = card();
+      LinearLayout agendaCard = card("agenda");
       agenda = column();
       agendaCard.addView(agenda);
       renderAgenda();
@@ -328,6 +328,8 @@ public class CloudFrameActivity extends Activity {
       addToCorner(corners, clockCard, "clock");
       addToCorner(corners, calendarCard, "calendar");
       addToCorner(corners, agendaCard, "agenda");
+      LinearLayout weatherCard = weatherCard();
+      if (weatherCard != null) addToCorner(corners, weatherCard, "weather");
       boolean narrow = getResources().getConfiguration().screenWidthDp < 600;
       if (narrow) {
         ScrollView sc = new ScrollView(this);
@@ -375,12 +377,92 @@ public class CloudFrameActivity extends Activity {
     wake();
   }
 
+  /** Weather card from snapshot.weather; null when the companion turned weather off or has no data. */
+  private LinearLayout weatherCard() {
+    JSONObject w = snapshot == null ? null : snapshot.optJSONObject("weather");
+    if (w == null || !settings().optBoolean("weather_visible", false)) return null;
+    JSONObject cur = w.optJSONObject("current");
+    if (cur == null) return null;
+    LinearLayout card = card("weather");
+    LinearLayout row = new LinearLayout(this);
+    row.setGravity(Gravity.CENTER_VERTICAL);
+    TextView temp = label(cur.optInt("temp") + "°", 44);
+    temp.setTypeface(Typeface.create("sans-serif-light", 0));
+    row.addView(temp);
+    TextView cond = label("  " + weatherIcon(cur.optInt("code")) + " " + weatherText(cur.optInt("code")), 16);
+    row.addView(cond);
+    card.addView(row);
+    String place = w.optString("label", "");
+    if (place.contains(",")) place = place.substring(0, place.indexOf(','));
+    TextView hl = label("H " + cur.optInt("high") + "°  ·  L " + cur.optInt("low") + "°" + (place.isEmpty() ? "" : "  ·  " + place), 14);
+    hl.setAlpha(.85f);
+    card.addView(hl);
+    JSONArray daily = w.optJSONArray("daily");
+    if (settings().optBoolean("weather_extended", false) && daily != null && daily.length() > 0) {
+      LinearLayout days = new LinearLayout(this);
+      days.setPadding(0, dp(8 * ts), 0, 0);
+      for (int i = 0; i < daily.length() && i < 5; i++) {
+        JSONObject d = daily.optJSONObject(i);
+        if (d == null) continue;
+        LinearLayout col = column();
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        String name;
+        try {
+          name = LocalDate.parse(d.optString("date")).getDayOfWeek().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault());
+        } catch (Exception ex) {
+          name = "";
+        }
+        TextView dn = label(name, 12);
+        dn.setAlpha(.75f);
+        dn.setGravity(Gravity.CENTER);
+        col.addView(dn);
+        TextView ic = label(weatherIcon(d.optInt("code")), 16);
+        ic.setGravity(Gravity.CENTER);
+        col.addView(ic);
+        TextView hi = label(d.optInt("high") + "°", 13);
+        hi.setGravity(Gravity.CENTER);
+        col.addView(hi);
+        TextView lo = label(d.optInt("low") + "°", 12);
+        lo.setAlpha(.7f);
+        lo.setGravity(Gravity.CENTER);
+        col.addView(lo);
+        days.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
+      }
+      card.addView(days);
+    }
+    return card;
+  }
+
+  private static String weatherText(int c) {
+    if (c == 0) return "Clear";
+    if (c <= 2) return "Partly cloudy";
+    if (c == 3) return "Cloudy";
+    if (c == 45 || c == 48) return "Fog";
+    if (c >= 51 && c <= 57) return "Drizzle";
+    if ((c >= 61 && c <= 67) || (c >= 80 && c <= 82)) return "Rain";
+    if ((c >= 71 && c <= 77) || c == 85 || c == 86) return "Snow";
+    if (c >= 95) return "Storms";
+    return "";
+  }
+
+  private static String weatherIcon(int c) {
+    if (c == 0) return "\u2600";
+    if (c <= 2) return "\u26C5";
+    if (c == 3 || c == 45 || c == 48) return "\u2601";
+    if ((c >= 71 && c <= 77) || c == 85 || c == 86) return "\u2744";
+    if (c >= 95) return "\u26A1";
+    if (c >= 51) return "\u2614";
+    return "";
+  }
+
   private void addToCorner(Map<String, LinearLayout> corners, View card, String kind) {
     if (!settings().optBoolean(kind + "_visible", true)) return;
     String fallback =
         kind.equals("clock")
             ? "top-left"
-            : kind.equals("calendar") ? "bottom-left" : "bottom-right";
+            : kind.equals("calendar")
+                ? "bottom-left"
+                : kind.equals("weather") ? "top-right" : "bottom-right";
     LinearLayout box = corners.get(settings().optString(kind + "_position", fallback));
     if (box == null) box = corners.get(fallback);
     LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
