@@ -73,7 +73,7 @@ final class CloudClient {
             new JSONObject()
                 .put("device_name", android.os.Build.MODEL)
                 .put("platform", "android")
-                .put("app_version", "1.2.3"),
+                .put("app_version", "1.2.4"),
             null);
     data.getString("pairing_id");
     data.getString("pairing_secret");
@@ -225,7 +225,7 @@ final class CloudClient {
   JSONObject sync() throws Exception {
     JSONObject snapshot;
     try {
-      snapshot = post(base(), "frame-sync", new JSONObject().put("app_version", "1.2.3"), token());
+      snapshot = post(base(), "frame-sync", new JSONObject().put("app_version", "1.2.4"), token());
     } catch (HttpError e) {
       if (e.code == 401 || e.code == 403) clear();
       throw e;
