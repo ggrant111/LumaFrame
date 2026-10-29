@@ -120,7 +120,7 @@ public class CloudFrameActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
-    upcoming = getSharedPreferences("cloud_ui", MODE_PRIVATE).getBoolean("upcoming", false);
+    upcoming = !getSharedPreferences("cloud_ui", MODE_PRIVATE).getBoolean("agenda_day_mode", false);
     active = true;
     handler.post(tick);
     schedulePhoto();
@@ -448,7 +448,9 @@ public class CloudFrameActivity extends Activity {
             v -> {
               selected = value;
               upcoming = false;
-              getSharedPreferences("cloud_ui", MODE_PRIVATE).edit().putBoolean("upcoming", false).apply();
+              getSharedPreferences("cloud_ui", MODE_PRIVATE).edit().putBoolean("agenda_day_mode", true).apply();
+              handler.removeCallbacks(backToUpcoming);
+              handler.postDelayed(backToUpcoming, 60000);
               renderMonth();
               renderAgenda();
             });
@@ -460,7 +462,7 @@ public class CloudFrameActivity extends Activity {
             () -> {
               selected = LocalDate.now(zone());
               renderMonth();
-              renderAgenda();
+              setUpcoming(true);
             }));
   }
 
@@ -511,9 +513,13 @@ public class CloudFrameActivity extends Activity {
     if (count == 0) agenda.addView(label("No synced events on this day.", 14));
   }
 
+  private final Runnable backToUpcoming = () -> setUpcoming(true);
+
   private void setUpcoming(boolean value) {
     upcoming = value;
-    getSharedPreferences("cloud_ui", MODE_PRIVATE).edit().putBoolean("upcoming", value).apply();
+    handler.removeCallbacks(backToUpcoming);
+    if (!value) handler.postDelayed(backToUpcoming, 60000);
+    getSharedPreferences("cloud_ui", MODE_PRIVATE).edit().putBoolean("agenda_day_mode", !value).apply();
     renderAgenda();
   }
 
