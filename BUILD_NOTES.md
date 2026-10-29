@@ -1,3 +1,7 @@
+# Version 1.1 companion update
+
+New CloudClient and CloudFrameActivity compile against Android SDK 35. Sixteen executable checks pass: eight calendar boundaries and eight HTTPS endpoint/bounded-response checks. Device credentials use Android Keystore; native runtime pairing, screenshot behavior, layout rendering and real-account end-to-end testing still require a physical device. No claim of full Gradle/Lint success is made. The v1.1 APK is built using the SDK toolchain and the same development signing key as v1.0.
+
 # Build validation · 2026-10-29
 
 Completed:

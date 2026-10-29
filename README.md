@@ -1,6 +1,10 @@
-# Luma Frame · Android 1.0
+# Luma Frame · Android 1.1
 
 A native Android photo frame with a quiet, Apple-inspired glass interface: full-bleed photos, soft transitions, an oversized clock, a month calendar, and a daily agenda. Original visual design; no Apple assets or services.
+
+## Companion web app
+
+Version 1.1 adds a **Cloud** button for pairing with Luma Frame Companion. The website manages user accounts, albums, calendar sources, permissions, and per-device layouts. See [Companion setup and API contract](docs/COMPANION.md). Cloud mode downloads assigned content over HTTPS; the original local-only mode remains available.
 
 ## Open in Android Studio
 
@@ -26,17 +30,17 @@ Build from a terminal: `./gradlew assembleDebug` (macOS/Linux) or `gradlew.bat a
 - Event taps open the installed calendar app. The + button opens its new-event editor; Luma Frame does not directly write calendar data.
 - Refresh on resume, once a minute, and when observed calendar data changes.
 - Immersive display and keep-awake while the app is in the foreground.
-- No ads, analytics, network permission, server, API key, or account password storage.
+- No ads, analytics, or account password storage. Cloud mode uses HTTPS and an encrypted device-scoped token; local mode works offline.
 
 ## Calendar scope
 
-Luma Frame reads visible calendars exposed by Android's Calendar Provider. Google, Exchange, Outlook, and other accounts work **when their calendar data is actually synced to that provider**. An account appearing inside a vendor app alone does not guarantee availability. Direct Google/Outlook OAuth, direct iCloud login, ICS subscriptions, and cloud photo-album sync are not implemented.
+Luma Frame reads visible calendars exposed by Android's Calendar Provider. Google, Exchange, Outlook, and other accounts work **when their calendar data is actually synced to that provider**. An account appearing inside a vendor app alone does not guarantee availability. This paragraph describes local mode. Companion cloud mode supports assigned cloud photos and calendar events through its backend; see the companion setup guide for provider configuration requirements.
 
 Devices without a calendar provider or document picker (including some Fire TV configurations) need those services or a future dedicated TV integration. This version primarily targets Android phones and tablets. It is not an Android TV launcher.
 
 ## Privacy and permissions
 
-`READ_CALENDAR` is requested only when you connect calendars. Denial leaves photo playback usable. You can revoke access in Android Settings. Selected document URI grants persist between launches; moving, deleting, or revoking a photo can make it unavailable, in which case it is removed from this app's list. App backup is disabled. Photos are not copied or uploaded.
+`READ_CALENDAR` is requested only when you connect calendars. Denial leaves photo playback usable. You can revoke access in Android Settings. Selected document URI grants persist between launches; moving, deleting, or revoking a photo can make it unavailable, in which case it is removed from this app's list. App backup is disabled. Local-mode photos are not copied or uploaded. Cloud-mode assigned photos are downloaded to private app storage, with a 24-hour offline expiry.
 
 ## Validation
 
