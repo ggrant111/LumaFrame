@@ -21,7 +21,11 @@ public class CloudFrameActivity extends Activity {
   private CloudClient client;
   private JSONObject snapshot, pairing;
   private FrameLayout root;
-  private ImageView background;
+  private FrameLayout stage;
+  private View currentSlide;
+  private String currentLayout = "single";
+  private Bitmap[] currentBitmaps;
+  private final List<ImageView> lastTiles = new ArrayList<>();
   private TextView status, clock, date;
   private View chromeBar;
   private boolean chromeHidden, stickyStatus, upcoming;
@@ -63,7 +67,6 @@ public class CloudFrameActivity extends Activity {
     return super.dispatchKeyEvent(ev);
   }
   private LinearLayout agenda, monthGrid;
-  private Bitmap photo;
   private int index, generation;
   private boolean active, busy, paused, closing;
   private long pairDeadline;
@@ -95,7 +98,7 @@ public class CloudFrameActivity extends Activity {
                       > CloudClient.MAX_OFFLINE_MS)) {
             client.cached();
             snapshot = null;
-            photo = null;
+            currentBitmaps = null;
             generation++;
             build();
           }
@@ -251,13 +254,12 @@ public class CloudFrameActivity extends Activity {
     root.setBackground(
         new GradientDrawable(
             GradientDrawable.Orientation.TL_BR, new int[] {0xFF759B9E, 0xFF112A43}));
-    background = new ImageView(this);
-    background.setScaleType(
-        "contain".equals(settings().optString("photo_fit"))
-            ? ImageView.ScaleType.FIT_CENTER
-            : ImageView.ScaleType.CENTER_CROP);
-    root.addView(background, new FrameLayout.LayoutParams(-1, -1));
-    if (photo != null) background.setImageBitmap(photo);
+    stage = new FrameLayout(this);
+    root.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+    if (currentBitmaps != null) {
+      currentSlide = slideView(currentLayout, currentBitmaps);
+      stage.addView(currentSlide, new FrameLayout.LayoutParams(-1, -1));
+    }
     View shade = new View(this);
     shade.setBackground(
         new GradientDrawable(
@@ -700,7 +702,7 @@ public class CloudFrameActivity extends Activity {
                     renderMonth();
                     renderAgenda();
                   }
-                  if (reload || photo == null) showPhoto(0);
+                  if (reload || currentBitmaps == null) showPhoto(0);
                   schedulePhoto();
                   if (active) handler.postDelayed(syncTimer, nextSync * 1000L);
                 });
@@ -711,7 +713,7 @@ public class CloudFrameActivity extends Activity {
                   if (isDestroyed() || closing) return;
                   if (!client.paired()) {
                     snapshot = null;
-                    photo = null;
+                    currentBitmaps = null;
                     generation++;
                     build();
                     setStatus("Device access revoked. Pair again to reconnect.");
@@ -719,7 +721,7 @@ public class CloudFrameActivity extends Activity {
                   }
                   if (client.cached() == null) {
                     snapshot = null;
-                    photo = null;
+                    currentBitmaps = null;
                     generation++;
                     build();
                   }
@@ -746,47 +748,220 @@ public class CloudFrameActivity extends Activity {
           Math.max(5, Math.min(300, settings().optInt("interval_seconds", 15))) * 1000L);
   }
 
+  /** One slide = a layout plus indexes into the photo list (mirrors planSlides on the web). */
+  private static final class Slide {
+    final String layout;
+    final int[] photos;
+    Slide(String layout, int[] photos) { this.layout = layout; this.photos = photos; }
+  }
+
+  private static boolean isPortrait(JSONObject p) {
+    int w = p.optInt("width", 0), h = p.optInt("height", 0);
+    return w > 0 && h > w;
+  }
+
+  private List<Slide> planSlides(JSONArray list) {
+    List<Slide> out = new ArrayList<>();
+    int n = list.length();
+    String layout = settings().optString("photo_layout", "single");
+    int per = "pair".equals(layout) ? 2 : "trio".equals(layout) ? 3 : "grid".equals(layout) ? 4 : 1;
+    if ("auto".equals(layout)) {
+      int i = 0;
+      while (i < n) {
+        if (isPortrait(list.optJSONObject(i)) && i + 1 < n && isPortrait(list.optJSONObject(i + 1))) {
+          out.add(new Slide("pair", new int[] {i, i + 1}));
+          i += 2;
+        } else out.add(new Slide("single", new int[] {i++}));
+      }
+      return out;
+    }
+    if (n < per) per = 1;
+    String l = per == 1 ? "single" : layout;
+    for (int i = 0; i < n; i += per) {
+      int[] ids = new int[per];
+      for (int j = 0; j < per; j++) ids[j] = (i + j) % n;
+      out.add(new Slide(l, ids));
+    }
+    return out;
+  }
+
+  private static void measure(JSONObject p) {
+    if (p.optInt("width", 0) > 0 && p.optInt("height", 0) > 0) return;
+    BitmapFactory.Options o = new BitmapFactory.Options();
+    o.inJustDecodeBounds = true;
+    BitmapFactory.decodeFile(p.optString("path"), o);
+    try {
+      p.put("width", o.outWidth).put("height", o.outHeight);
+    } catch (JSONException ignored) {
+    }
+  }
+
+  private static Bitmap decode(String path, int maxSide) {
+    try {
+      return ImageDecoder.decodeBitmap(
+          ImageDecoder.createSource(new File(path)),
+          (d, info, s) -> {
+            float scale =
+                Math.min(1f, (float) maxSide / Math.max(info.getSize().getWidth(), info.getSize().getHeight()));
+            d.setTargetSize(
+                Math.max(1, (int) (info.getSize().getWidth() * scale)),
+                Math.max(1, (int) (info.getSize().getHeight() * scale)));
+            d.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+          });
+    } catch (Exception | OutOfMemoryError e) {
+      return null;
+    }
+  }
+
   private void showPhoto(int desired) {
     JSONArray list = snapshot == null ? null : snapshot.optJSONArray("photos");
     int request = ++generation;
     if (list == null || list.length() == 0) {
-      photo = null;
-      background.setImageDrawable(null);
+      currentBitmaps = null;
+      stage.removeAllViews();
+      currentSlide = null;
       return;
     }
-    index = Math.floorMod(desired, list.length());
-    String path = list.optJSONObject(index).optString("path");
     decoder.execute(
         () -> {
-          Bitmap loaded = null;
-          try {
-            loaded =
-                ImageDecoder.decodeBitmap(
-                    ImageDecoder.createSource(new File(path)),
-                    (d, info, s) -> {
-                      float scale =
-                          Math.min(
-                              1f,
-                              2048f
-                                  / Math.max(
-                                      info.getSize().getWidth(), info.getSize().getHeight()));
-                      d.setTargetSize(
-                          Math.max(1, (int) (info.getSize().getWidth() * scale)),
-                          Math.max(1, (int) (info.getSize().getHeight() * scale)));
-                      d.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
-                    });
-          } catch (Exception | OutOfMemoryError ignored) {
-          }
-          final Bitmap b = loaded;
+          if ("auto".equals(settings().optString("photo_layout")))
+            for (int i = 0; i < list.length(); i++) measure(list.optJSONObject(i));
+          List<Slide> slides = planSlides(list);
+          int at = Math.floorMod(desired, slides.size());
+          Slide slide = slides.get(at);
+          int maxSide = slide.photos.length == 1 ? 2048 : 1280;
+          Bitmap[] bms = new Bitmap[slide.photos.length];
+          for (int i = 0; i < bms.length; i++)
+            bms[i] = decode(list.optJSONObject(slide.photos[i]).optString("path"), maxSide);
           handler.post(
               () -> {
                 if (isDestroyed() || request != generation) return;
-                photo = b;
-                background.setAlpha(0f);
-                background.setImageBitmap(b);
-                background.animate().alpha(1f).setDuration(700).start();
+                index = at;
+                transitionTo(slide.layout, bms);
               });
         });
+  }
+
+  private void transitionTo(String layout, Bitmap[] bms) {
+    currentLayout = layout;
+    currentBitmaps = bms;
+    View old = currentSlide;
+    View next = slideView(layout, bms);
+    List<ImageView> tiles = new ArrayList<>(lastTiles);
+    currentSlide = next;
+    stage.addView(next, new FrameLayout.LayoutParams(-1, -1));
+    int ms = settings().optInt("transition_ms", 1200);
+    if (ms != 600 && ms != 2500) ms = 1200;
+    String fx = settings().optString("transition", "crossfade");
+    if ("random".equals(fx)) {
+      String[] all = {"crossfade", "kenburns", "slide", "fade_black"};
+      fx = all[new Random().nextInt(all.length)];
+    }
+    Runnable dropOld = () -> { if (old != null) stage.removeView(old); };
+    int w = Math.max(1, root.getWidth());
+    switch (fx) {
+      case "slide":
+        next.setTranslationX(w);
+        next.animate().translationX(0).setDuration(ms).start();
+        if (old != null) old.animate().translationX(-w).setDuration(ms).withEndAction(dropOld).start();
+        break;
+      case "fade_black":
+        next.setAlpha(0f);
+        int half = ms / 2;
+        if (old != null) old.animate().alpha(0f).setDuration(half).withEndAction(dropOld).start();
+        next.animate().alpha(1f).setStartDelay(old == null ? 0 : half).setDuration(half).start();
+        break;
+      default:
+        next.setAlpha(0f);
+        next.animate().alpha(1f).setDuration(ms).withEndAction(dropOld).start();
+        if ("kenburns".equals(fx)) {
+          long hold = Math.max(5, Math.min(300, settings().optInt("interval_seconds", 15))) * 1000L + ms;
+          for (ImageView t : tiles)
+            t.animate()
+                .scaleX(1.1f)
+                .scaleY(1.1f)
+                .setDuration(hold)
+                .setInterpolator(new android.view.animation.LinearInterpolator())
+                .start();
+        }
+    }
+  }
+
+  /** Builds one slide: single photo or a pair / trio / 2x2 grid with optional gaps. */
+  private View slideView(String layout, Bitmap[] bms) {
+    lastTiles.clear();
+    boolean multi = !"single".equals(layout);
+    String gapSetting = settings().optString("photo_gap", "none");
+    android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+    int shortSide = Math.min(m.widthPixels, m.heightPixels);
+    int gap = !multi || "none".equals(gapSetting) ? 0 : (int) (shortSide * ("thin".equals(gapSetting) ? .006f : .015f));
+    FrameLayout holder = new FrameLayout(this);
+    holder.setPadding(gap / 2, gap / 2, gap / 2, gap / 2);
+    if (!multi) {
+      holder.addView(tile(bms[0], false, 0), new FrameLayout.LayoutParams(-1, -1));
+      return holder;
+    }
+    LinearLayout body;
+    if ("grid".equals(layout)) {
+      body = column();
+      LinearLayout r1 = row(), r2 = row();
+      addTile(r1, tile(bms[0], true, gap), gap, 1);
+      addTile(r1, tile(bms[1], true, gap), gap, 1);
+      addTile(r2, tile(bms[2], true, gap), gap, 1);
+      addTile(r2, tile(bms[3], true, gap), gap, 1);
+      body.addView(r1, new LinearLayout.LayoutParams(-1, 0, 1));
+      body.addView(r2, new LinearLayout.LayoutParams(-1, 0, 1));
+    } else if ("trio".equals(layout)) {
+      body = row();
+      addTile(body, tile(bms[0], true, gap), gap, 2);
+      LinearLayout side = column();
+      addTile(side, tile(bms[1], true, gap), gap, 1);
+      addTile(side, tile(bms[2], true, gap), gap, 1);
+      body.addView(side, new LinearLayout.LayoutParams(0, -1, 1));
+    } else {
+      body = row();
+      for (Bitmap b : bms) addTile(body, tile(b, true, gap), gap, 1);
+    }
+    holder.addView(body, new FrameLayout.LayoutParams(-1, -1));
+    return holder;
+  }
+
+  private LinearLayout row() {
+    LinearLayout l = new LinearLayout(this);
+    l.setOrientation(LinearLayout.HORIZONTAL);
+    return l;
+  }
+
+  private LinearLayout column() {
+    LinearLayout l = new LinearLayout(this);
+    l.setOrientation(LinearLayout.VERTICAL);
+    return l;
+  }
+
+  private void addTile(LinearLayout parent, View v, int gap, float weight) {
+    boolean horizontal = parent.getOrientation() == LinearLayout.HORIZONTAL;
+    LinearLayout.LayoutParams lp =
+        horizontal ? new LinearLayout.LayoutParams(0, -1, weight) : new LinearLayout.LayoutParams(-1, 0, weight);
+    lp.setMargins(gap / 2, gap / 2, gap / 2, gap / 2);
+    parent.addView(v, lp);
+  }
+
+  private ImageView tile(Bitmap b, boolean multi, int gap) {
+    ImageView iv = new ImageView(this);
+    iv.setScaleType(
+        !multi && "contain".equals(settings().optString("photo_fit"))
+            ? ImageView.ScaleType.FIT_CENTER
+            : ImageView.ScaleType.CENTER_CROP);
+    if (b != null) iv.setImageBitmap(b);
+    if (gap > 0) {
+      GradientDrawable bg = new GradientDrawable();
+      bg.setColor(0x22000000);
+      bg.setCornerRadius(gap * 1.5f);
+      iv.setBackground(bg);
+      iv.setClipToOutline(true);
+    }
+    lastTiles.add(iv);
+    return iv;
   }
 
   private void beginPairDialog() {
@@ -1101,8 +1276,9 @@ public class CloudFrameActivity extends Activity {
                             handler.removeCallbacks(syncTimer);
                             handler.removeCallbacks(photoTimer);
                             snapshot = null;
-                            photo = null;
-                            background.setImageDrawable(null);
+                            currentBitmaps = null;
+                            stage.removeAllViews();
+      currentSlide = null;
                             build();
                             setStatus("Unpairing…");
                             network.execute(
