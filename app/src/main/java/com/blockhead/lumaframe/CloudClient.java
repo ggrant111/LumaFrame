@@ -288,7 +288,9 @@ final class CloudClient {
             new JSONObject()
                 .put("path", dest.getAbsolutePath())
                 .put("id", photo.getString("id"))
-                .put("version", photo.optString("version")));
+                .put("version", photo.optString("version"))
+                .put("width", photo.optInt("width", 0))
+                .put("height", photo.optInt("height", 0)));
       } catch (Exception e) {
         skipped++;
       }
