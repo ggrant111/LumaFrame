@@ -16,7 +16,7 @@ import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 import org.json.*;
 
-/** Opaque device credentials, private bounded cache, no account credentials on the frame. */
+/** Opaque device credentials, private bounded cache; account passwords are never stored. */
 final class CloudClient {
   static final long MAX_OFFLINE_MS = 24 * 60 * 60 * 1000L;
   private static final int MAX_JSON = 4 * 1024 * 1024, MAX_IMAGE = 20 * 1024 * 1024;
@@ -34,8 +34,19 @@ final class CloudClient {
     return prefs.contains("token");
   }
 
+  /** Built-in companion address; can still be changed under Advanced when pairing. */
+  static final String DEFAULT_BASE = "https://luma-frame.lovable.app/functions/v1";
+
   String base() {
-    return prefs.getString("base", "");
+    return prefs.getString("base", DEFAULT_BASE);
+  }
+
+  /** Web page a phone opens (via QR) to connect this frame: https://<host>/pair?code=CODE */
+  static String pairUrl(String base, String userCode) throws Exception {
+    URI uri = new URI(validateBase(base));
+    String code = userCode.replaceAll("[^A-Za-z0-9]", "");
+    return new URI("https", null, uri.getHost(), uri.getPort(), "/pair", "code=" + code, null)
+        .toString();
   }
 
   static String validateBase(String raw) throws Exception {
@@ -62,7 +73,7 @@ final class CloudClient {
             new JSONObject()
                 .put("device_name", android.os.Build.MODEL)
                 .put("platform", "android")
-                .put("app_version", "1.1.0"),
+                .put("app_version", "1.2.0"),
             null);
     data.getString("pairing_id");
     data.getString("pairing_secret");
@@ -80,16 +91,36 @@ final class CloudClient {
                 .put("pairing_id", pairing.getString("pairing_id"))
                 .put("pairing_secret", pairing.getString("pairing_secret")),
             null);
-    if ("paired".equals(response.optString("status"))) {
-      String token = response.getString("device_token");
-      if (token.length() < 32) throw new IOException("Invalid pairing credential");
-      prefs
-          .edit()
-          .putString("token", encrypt(token))
-          .putString("device_id", response.getString("device_id"))
-          .commit();
-    }
+    if ("paired".equals(response.optString("status"))) storeToken(response);
     return response;
+  }
+
+  /**
+   * Pair by signing in on the frame. The password is sent once over HTTPS and never stored.
+   * Returns {"status":"paired"|"choose_household"|"expired", ...}.
+   */
+  JSONObject loginPair(JSONObject pairing, String email, String password, String householdId)
+      throws Exception {
+    JSONObject body =
+        new JSONObject()
+            .put("pairing_id", pairing.getString("pairing_id"))
+            .put("pairing_secret", pairing.getString("pairing_secret"))
+            .put("email", email.trim())
+            .put("password", password);
+    if (householdId != null) body.put("household_id", householdId);
+    JSONObject response = post(base(), "frame-login", body, null);
+    if ("paired".equals(response.optString("status"))) storeToken(response);
+    return response;
+  }
+
+  private void storeToken(JSONObject response) throws Exception {
+    String token = response.getString("device_token");
+    if (token.length() < 32) throw new IOException("Invalid pairing credential");
+    prefs
+        .edit()
+        .putString("token", encrypt(token))
+        .putString("device_id", response.getString("device_id"))
+        .commit();
   }
 
   private SecretKey key() throws Exception {
@@ -194,7 +225,7 @@ final class CloudClient {
   JSONObject sync() throws Exception {
     JSONObject snapshot;
     try {
-      snapshot = post(base(), "frame-sync", new JSONObject().put("app_version", "1.1.0"), token());
+      snapshot = post(base(), "frame-sync", new JSONObject().put("app_version", "1.2.0"), token());
     } catch (HttpError e) {
       if (e.code == 401 || e.code == 403) clear();
       throw e;
