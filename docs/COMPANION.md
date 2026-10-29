@@ -1,4 +1,4 @@
-# Luma Frame Companion · Android v1.2
+# Luma Frame Companion · Android v1.2.2
 
 Lovable project: https://lovable.dev/projects/a4318ed3-fb43-45d7-8bed-c0a358ea22bf
 
@@ -20,6 +20,8 @@ Cloud mode is independent of local mode. It does not need Android's READ_CALENDA
 ## Layout behavior
 
 Large screens display the four configured corner areas. If two widgets share a corner, they stack in a scrollable column. On narrow screens (under 700 dp), the corner groups stack in order for readability. Each group is scrollable when its content exceeds available space. `photo_fit` supports `cover` (crop) and `contain` (fit). The cloud mode uses tinted translucent gradient panels; the local mode retains its sampled frosted-photo effect.
+
+On the cloud frame screen, the header, **Settings** button and sync line fade out after 8 seconds without input. The first touch or remote/D-pad press only brings them back; it does not activate anything. Error messages stay visible until the next press. The agenda card has **Show next 5**, which lists the next five upcoming events from all calendars on the frame; **Show day** or picking a date returns to the day view. The choice is remembered on the frame.
 
 ## Permissions and storage
 
