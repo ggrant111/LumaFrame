@@ -23,6 +23,45 @@ public class CloudFrameActivity extends Activity {
   private FrameLayout root;
   private ImageView background;
   private TextView status, clock, date;
+  private View chromeBar;
+  private boolean chromeHidden, stickyStatus, upcoming;
+  private static final long CHROME_HIDE_MS = 8000;
+  private final Runnable hideChrome =
+      () -> {
+        if (snapshot == null || stickyStatus) return;
+        chromeHidden = true;
+        if (chromeBar != null) chromeBar.animate().alpha(0f).setDuration(600).start();
+        if (status != null) status.animate().alpha(0f).setDuration(600).start();
+      };
+
+  private void wake() {
+    handler.removeCallbacks(hideChrome);
+    chromeHidden = false;
+    if (chromeBar != null) chromeBar.animate().alpha(1f).setDuration(250).start();
+    if (status != null) status.animate().alpha(1f).setDuration(250).start();
+    if (!stickyStatus) handler.postDelayed(hideChrome, CHROME_HIDE_MS);
+  }
+
+  @Override
+  public boolean dispatchTouchEvent(MotionEvent ev) {
+    if (chromeHidden) {
+      // First touch only wakes the controls; swallow the whole gesture.
+      if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) wake();
+      return true;
+    }
+    if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) wake();
+    return super.dispatchTouchEvent(ev);
+  }
+
+  @Override
+  public boolean dispatchKeyEvent(KeyEvent ev) {
+    if (chromeHidden) {
+      if (ev.getAction() == KeyEvent.ACTION_UP) wake();
+      return true;
+    }
+    if (ev.getAction() == KeyEvent.ACTION_DOWN) wake();
+    return super.dispatchKeyEvent(ev);
+  }
   private LinearLayout agenda, monthGrid;
   private Bitmap photo;
   private int index, generation;
@@ -81,6 +120,7 @@ public class CloudFrameActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
+    upcoming = getSharedPreferences("cloud_ui", MODE_PRIVATE).getBoolean("upcoming", false);
     active = true;
     handler.post(tick);
     schedulePhoto();
@@ -91,6 +131,7 @@ public class CloudFrameActivity extends Activity {
   @Override
   protected void onPause() {
     super.onPause();
+    handler.removeCallbacks(hideChrome);
     active = false;
     handler.removeCallbacks(tick);
     handler.removeCallbacks(syncTimer);
@@ -221,6 +262,7 @@ public class CloudFrameActivity extends Activity {
     brand.setLetterSpacing(.15f);
     bar.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
     bar.addView(button("Settings", this::menu));
+    chromeBar = bar;
     FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(-1, dp(64 * ts) + dp(8), Gravity.TOP);
     root.addView(bar, top);
     if (snapshot == null) {
@@ -321,6 +363,8 @@ public class CloudFrameActivity extends Activity {
     root.addView(status, bottom);
     setContentView(root);
     updateClock();
+    chromeHidden = false;
+    wake();
   }
 
   private void addToCorner(Map<String, LinearLayout> corners, View card, String kind) {
@@ -403,6 +447,8 @@ public class CloudFrameActivity extends Activity {
         t.setOnClickListener(
             v -> {
               selected = value;
+              upcoming = false;
+              getSharedPreferences("cloud_ui", MODE_PRIVATE).edit().putBoolean("upcoming", false).apply();
               renderMonth();
               renderAgenda();
             });
@@ -421,8 +467,23 @@ public class CloudFrameActivity extends Activity {
   private void renderAgenda() {
     if (agenda == null || snapshot == null) return;
     agenda.removeAllViews();
-    agenda.addView(label(selected.format(DateTimeFormatter.ofPattern("EEE, MMM d")), 18));
+    LinearLayout head = new LinearLayout(this);
+    head.setGravity(Gravity.CENTER_VERTICAL);
+    head.addView(
+        label(upcoming ? "Up next" : selected.format(DateTimeFormatter.ofPattern("EEE, MMM d")), 18),
+        new LinearLayout.LayoutParams(0, -2, 1));
+    head.addView(
+        button(
+            upcoming ? "Show day" : "Show next 5",
+            () -> {
+              setUpcoming(!upcoming);
+            }));
+    agenda.addView(head);
     JSONArray items = snapshot.optJSONArray("events");
+    if (upcoming) {
+      renderUpcoming(items);
+      return;
+    }
     int count = 0;
     if (items != null)
       for (int i = 0; i < items.length(); i++) {
@@ -450,8 +511,62 @@ public class CloudFrameActivity extends Activity {
     if (count == 0) agenda.addView(label("No synced events on this day.", 14));
   }
 
+  private void setUpcoming(boolean value) {
+    upcoming = value;
+    getSharedPreferences("cloud_ui", MODE_PRIVATE).edit().putBoolean("upcoming", value).apply();
+    renderAgenda();
+  }
+
+  private void renderUpcoming(JSONArray items) {
+    long now = System.currentTimeMillis();
+    List<JSONObject> list = new ArrayList<>();
+    if (items != null)
+      for (int i = 0; i < items.length(); i++) {
+        JSONObject e = items.optJSONObject(i);
+        if (e == null) continue;
+        long start = e.optLong("start_ms"), end = Math.max(e.optLong("end_ms"), start + 1);
+        if (end > now) list.add(e);
+      }
+    Collections.sort(list, (x, y) -> Long.compare(x.optLong("start_ms"), y.optLong("start_ms")));
+    LocalDate today = LocalDate.now(zone());
+    int shown = 0;
+    for (JSONObject e : list) {
+      if (shown == 5) break;
+      boolean all = e.optBoolean("all_day");
+      long start = e.optLong("start_ms");
+      // All-day events use UTC-midnight date boundaries.
+      ZonedDateTime at = Instant.ofEpochMilli(start).atZone(all ? ZoneOffset.UTC : zone());
+      LocalDate day = at.toLocalDate();
+      if (all && day.isBefore(today)) day = today; // multi-day event already underway
+      String dayLabel =
+          day.equals(today)
+              ? "Today"
+              : day.equals(today.plusDays(1))
+                  ? "Tomorrow"
+                  : day.format(DateTimeFormatter.ofPattern("EEE, MMM d"));
+      agenda.addView(label(e.optString("title", "Busy"), 16));
+      String location = e.optString("location");
+      TextView meta =
+          label(
+              dayLabel
+                  + " · "
+                  + (all ? "All day" : at.format(DateTimeFormatter.ofPattern("h:mm a")))
+                  + (location.isEmpty() ? "" : " · " + location),
+              12);
+      meta.setAlpha(.75f);
+      agenda.addView(meta);
+      shown++;
+    }
+    if (shown == 0) agenda.addView(label("No upcoming synced events.", 14));
+  }
+
   private void setStatus(String message) {
     statusMessage = message;
+    String m = message.toLowerCase(Locale.ROOT);
+    stickyStatus =
+        m.contains("revoked") || m.contains("unavailable") || m.contains("expired")
+            || m.contains("interrupted") || m.contains("failed") || m.contains("error");
+    wake();
     if (status != null) status.setText(message);
   }
 
