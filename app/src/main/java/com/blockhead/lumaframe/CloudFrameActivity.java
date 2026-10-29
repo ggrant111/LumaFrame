@@ -532,19 +532,155 @@ public class CloudFrameActivity extends Activity {
 
   private void beginPairDialog() {
     if (busy) return;
+    beginPair(client.base());
+  }
+
+  private void advancedAddressDialog() {
     EditText endpoint = new EditText(this);
     endpoint.setSingleLine(true);
     endpoint.setInputType(
         android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
-    endpoint.setHint("https://…supabase.co/functions/v1");
+    endpoint.setHint(CloudClient.DEFAULT_BASE);
     endpoint.setText(client.base());
     new AlertDialog.Builder(this)
-        .setTitle("Connect your companion")
-        .setMessage("Copy the Device API address from the companion website's Devices page.")
+        .setTitle("Companion address")
+        .setMessage("Only change this if you run your own companion server.")
         .setView(endpoint)
         .setNegativeButton("Cancel", null)
+        .setNeutralButton("Use default", (d, w) -> beginPair(CloudClient.DEFAULT_BASE))
         .setPositiveButton("Get pairing code", (d, w) -> beginPair(endpoint.getText().toString()))
         .show();
+  }
+
+  /** QR code for the phone sign-in page, drawn with ZXing core (no camera/scanner needed here). */
+  private Bitmap qrBitmap(String text, int size) {
+    try {
+      com.google.zxing.common.BitMatrix m =
+          new com.google.zxing.qrcode.QRCodeWriter()
+              .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size);
+      Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+      for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++) bmp.setPixel(x, y, m.get(x, y) ? Color.BLACK : Color.WHITE);
+      return bmp;
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  private View pairingView(JSONObject p) {
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setGravity(Gravity.CENTER_HORIZONTAL);
+    int pad = (int) (20 * getResources().getDisplayMetrics().density);
+    box.setPadding(pad, pad / 2, pad, 0);
+    try {
+      Bitmap qr = qrBitmap(CloudClient.pairUrl(client.base(), p.optString("user_code")), 480);
+      if (qr != null) {
+        ImageView iv = new ImageView(this);
+        iv.setImageBitmap(qr);
+        int s = (int) (220 * getResources().getDisplayMetrics().density);
+        box.addView(iv, new LinearLayout.LayoutParams(s, s));
+      }
+    } catch (Exception ignored) {
+    }
+    TextView t = new TextView(this);
+    t.setGravity(Gravity.CENTER);
+    t.setPadding(0, pad / 2, 0, 0);
+    t.setText(
+        "Scan with your phone and sign in to connect this frame.\nOr open Devices → Pair device"
+            + " and enter the code. Expires in 10 minutes.");
+    box.addView(t);
+    return box;
+  }
+
+  private void signInDialog(JSONObject p, String householdId) {
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    int pad = (int) (20 * getResources().getDisplayMetrics().density);
+    box.setPadding(pad, 0, pad, 0);
+    EditText email = new EditText(this);
+    email.setSingleLine(true);
+    email.setHint("Email");
+    email.setInputType(
+        android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+    EditText password = new EditText(this);
+    password.setSingleLine(true);
+    password.setHint("Password");
+    password.setInputType(
+        android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    box.addView(email);
+    box.addView(password);
+    new AlertDialog.Builder(this)
+        .setTitle("Sign in to Luma Frame")
+        .setMessage("Household owners only. Your password is used once and isn't saved.")
+        .setView(box)
+        .setNegativeButton(
+            "Back",
+            (d, w) -> {
+              if (pairing != null && pairingDialog != null) pairingDialog.show();
+            })
+        .setPositiveButton(
+            "Sign in",
+            (d, w) ->
+                loginPair(p, email.getText().toString(), password.getText().toString(), householdId))
+        .show();
+  }
+
+  private void loginPair(JSONObject p, String email, String password, String householdId) {
+    busy = true;
+    setStatus("Signing in…");
+    network.execute(
+        () -> {
+          try {
+            JSONObject r = client.loginPair(p, email, password, householdId);
+            handler.post(
+                () -> {
+                  busy = false;
+                  if (isDestroyed()) return;
+                  String st = r.optString("status");
+                  if ("paired".equals(st)) {
+                    pairing = null;
+                    handler.removeCallbacks(pairTimer);
+                    if (pairingDialog != null) pairingDialog.dismiss();
+                    setStatus("Connected. Loading your frame…");
+                    sync();
+                  } else if ("choose_household".equals(st)) {
+                    JSONArray hs = r.optJSONArray("households");
+                    int n = hs == null ? 0 : hs.length();
+                    String[] names = new String[n];
+                    String[] ids = new String[n];
+                    for (int i = 0; i < n; i++) {
+                      names[i] = hs.optJSONObject(i).optString("name");
+                      ids[i] = hs.optJSONObject(i).optString("id");
+                    }
+                    new AlertDialog.Builder(this)
+                        .setTitle("Choose household")
+                        .setItems(names, (d, w) -> loginPair(p, email, password, ids[w]))
+                        .show();
+                  } else {
+                    setStatus("Pairing code expired. Pair again.");
+                    if (pairingDialog != null) pairingDialog.dismiss();
+                  }
+                });
+          } catch (Exception e) {
+            handler.post(
+                () -> {
+                  busy = false;
+                  int code = e instanceof CloudClient.HttpError ? ((CloudClient.HttpError) e).code : 0;
+                  setStatus(
+                      code == 401
+                          ? "Wrong email or password."
+                          : code == 403
+                              ? "Only a household owner can connect a frame."
+                              : code == 429
+                                  ? "Too many attempts. Try again in a few minutes."
+                                  : "Could not sign in. Check the connection.");
+                  if (pairing != null && pairingDialog != null) pairingDialog.show();
+                });
+          }
+        });
   }
 
   private void beginPair(String endpoint) {
@@ -572,9 +708,9 @@ public class CloudFrameActivity extends Activity {
                   pairingDialog =
                       new AlertDialog.Builder(this)
                           .setTitle(p.optString("user_code"))
-                          .setMessage(
-                              "On your companion website, open Devices → Pair device and enter this"
-                                  + " code. Expires in 10 minutes.")
+                          .setView(pairingView(p))
+                          .setPositiveButton("Sign in on this frame", (d, w) -> signInDialog(p, null))
+                          .setNeutralButton("Advanced", (d, w) -> advancedAddressDialog())
                           .setNegativeButton(
                               "Cancel",
                               (d, w) -> {
@@ -595,8 +731,8 @@ public class CloudFrameActivity extends Activity {
                 () -> {
                   busy = false;
                   setStatus(
-                      "Could not begin pairing. Check the HTTPS Device API address and"
-                          + " connection.");
+                      "Could not begin pairing. Check the internet connection, or set the"
+                          + " companion address under Advanced.");
                 });
           }
         });
