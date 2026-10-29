@@ -106,6 +106,32 @@ public class CloudFrameActivity extends Activity {
     decoder.shutdownNow();
   }
 
+  // Layout profile: text/padding scale and card width as a share of the screen.
+  private float ts = 1f;
+  private float cardPct = .34f;
+  private int edge, cellH, rowGap;
+
+  private void computeProfile() {
+    android.content.res.Configuration c = getResources().getConfiguration();
+    boolean tv =
+        (c.uiMode & android.content.res.Configuration.UI_MODE_TYPE_MASK)
+                == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+            || c.screenWidthDp >= 960;
+    if (tv) {
+      ts = .75f;
+      cardPct = .26f;
+    } else if (c.screenWidthDp >= 600) {
+      ts = .9f;
+      cardPct = .34f;
+    } else {
+      ts = 1f;
+      cardPct = 1f;
+    }
+    android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+    edge = Math.max(dp(16), (int) (m.widthPixels * .04f));
+    rowGap = dp(10 * ts);
+  }
+
   private int dp(float n) {
     return (int) (getResources().getDisplayMetrics().density * n + .5f);
   }
@@ -126,15 +152,16 @@ public class CloudFrameActivity extends Activity {
     TextView t = new TextView(this);
     t.setText(s);
     t.setTextColor(Color.WHITE);
-    t.setTextSize(size);
-    t.setPadding(dp(3), dp(3), dp(3), dp(3));
+    t.setTextSize(size * ts);
+    t.setPadding(dp(3 * ts), dp(3 * ts), dp(3 * ts), dp(3 * ts));
     return t;
   }
 
   private TextView button(String s, Runnable action) {
     TextView b = label(s, 14);
-    b.setPadding(dp(14), dp(12), dp(14), dp(12));
-    b.setMinHeight(dp(48));
+    b.setPadding(dp(14 * ts), dp(10 * ts), dp(14 * ts), dp(10 * ts));
+    b.setMinHeight(dp(44 * ts));
+    b.setMinWidth(dp(44 * ts));
     b.setGravity(Gravity.CENTER);
     b.setBackground(glass(.7f));
     b.setFocusable(true);
@@ -150,7 +177,7 @@ public class CloudFrameActivity extends Activity {
             new int[] {
               ((int) (alpha * 255) << 24) | 0x526C7C, ((int) (alpha * 255) << 24) | 0x213B4C
             });
-    g.setCornerRadius(dp(24));
+    g.setCornerRadius(dp(22 * ts));
     g.setStroke(dp(1), 0x66FFFFFF);
     return g;
   }
@@ -163,13 +190,14 @@ public class CloudFrameActivity extends Activity {
 
   private LinearLayout card() {
     LinearLayout l = column();
-    l.setPadding(dp(18), dp(14), dp(18), dp(14));
+    l.setPadding(dp(18 * ts), dp(14 * ts), dp(18 * ts), dp(14 * ts));
     l.setBackground(
         glass((float) Math.max(.15, Math.min(.95, settings().optDouble("glass_opacity", .65)))));
     return l;
   }
 
   private void build() {
+    computeProfile();
     root = new FrameLayout(this);
     root.setBackground(
         new GradientDrawable(
@@ -188,12 +216,12 @@ public class CloudFrameActivity extends Activity {
     root.addView(shade, new FrameLayout.LayoutParams(-1, -1));
     LinearLayout bar = new LinearLayout(this);
     bar.setGravity(Gravity.CENTER_VERTICAL);
-    bar.setPadding(dp(16), dp(8), dp(16), dp(8));
+    bar.setPadding(edge, dp(8 * ts), edge, dp(8 * ts));
     TextView brand = label("LUMA / FRAME", 13);
     brand.setLetterSpacing(.15f);
     bar.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
     bar.addView(button("Settings", this::menu));
-    FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(-1, dp(64), Gravity.TOP);
+    FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(-1, dp(64 * ts) + dp(8), Gravity.TOP);
     root.addView(bar, top);
     if (snapshot == null) {
       LinearLayout welcome = card();
@@ -223,11 +251,19 @@ public class CloudFrameActivity extends Activity {
     } else {
       if (selected == null) selected = LocalDate.now(zone());
       LinearLayout clockCard = card();
-      clock = label("", getResources().getConfiguration().screenWidthDp < 600 ? 42 : 58);
+      clock = label("", 58);
       clock.setTypeface(Typeface.create("sans-serif-light", 0));
       date = label("", 16);
+      date.setAlpha(.85f);
       clockCard.addView(clock);
       clockCard.addView(date);
+      android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+      int topInset = dp(64 * ts) + dp(8), bottomInset = dp(48 * ts) + dp(8);
+      int cornerMaxH = (m.heightPixels - topInset - bottomInset - rowGap) / 2;
+      // Fit the month grid into a corner: heading + weekday row + 6 weeks + Today button.
+      cellH =
+          Math.max(
+              dp(22), Math.min(dp(35 * ts), (cornerMaxH - dp(150 * ts)) / 6));
       LinearLayout calendarCard = card();
       monthGrid = column();
       calendarCard.addView(monthGrid);
@@ -242,35 +278,46 @@ public class CloudFrameActivity extends Activity {
       addToCorner(corners, clockCard, "clock");
       addToCorner(corners, calendarCard, "calendar");
       addToCorner(corners, agendaCard, "agenda");
-      boolean narrow = getResources().getConfiguration().screenWidthDp < 700;
+      boolean narrow = getResources().getConfiguration().screenWidthDp < 600;
       if (narrow) {
         ScrollView sc = new ScrollView(this);
         LinearLayout stack = column();
         for (LinearLayout corner : corners.values()) stack.addView(corner);
         sc.addView(stack);
         FrameLayout.LayoutParams pos = new FrameLayout.LayoutParams(-1, -1);
-        pos.setMargins(dp(16), dp(72), dp(16), dp(80));
+        pos.setMargins(edge, topInset, edge, bottomInset);
         root.addView(sc, pos);
-      } else
+      } else {
+        int width = Math.max(dp(260 * ts), (int) (m.widthPixels * cardPct));
+        width = Math.min(width, (m.widthPixels - edge * 3) / 2);
+        final int maxH = Math.max(dp(100), cornerMaxH);
         for (Map.Entry<String, LinearLayout> entry : corners.entrySet()) {
+          if (entry.getValue().getChildCount() == 0) continue;
           boolean left = entry.getKey().endsWith("left"), up = entry.getKey().startsWith("top");
-          ScrollView sc = new ScrollView(this);
-          sc.setFillViewport(false);
+          // Wraps its content but never grows past half the usable height.
+          ScrollView sc =
+              new ScrollView(this) {
+                @Override
+                protected void onMeasure(int w, int h) {
+                  super.onMeasure(w, View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST));
+                }
+              };
+          sc.setVerticalScrollBarEnabled(false);
           sc.addView(entry.getValue());
-          int h = (getResources().getDisplayMetrics().heightPixels - dp(170)) / 2;
           FrameLayout.LayoutParams pos =
               new FrameLayout.LayoutParams(
-                  Math.min(dp(390), (getResources().getDisplayMetrics().widthPixels - dp(60)) / 2),
-                  Math.max(dp(100), h),
+                  width,
+                  -2,
                   (up ? Gravity.TOP : Gravity.BOTTOM) | (left ? Gravity.LEFT : Gravity.RIGHT));
-          pos.setMargins(dp(24), dp(74), dp(24), dp(80));
+          pos.setMargins(edge, topInset, edge, bottomInset);
           root.addView(sc, pos);
         }
+      }
     }
     status = label(statusMessage, 12);
     status.setGravity(Gravity.CENTER);
-    FrameLayout.LayoutParams bottom = new FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM);
-    bottom.setMargins(dp(16), 0, dp(16), 0);
+    FrameLayout.LayoutParams bottom = new FrameLayout.LayoutParams(-1, dp(48 * ts), Gravity.BOTTOM);
+    bottom.setMargins(edge, 0, edge, dp(8));
     root.addView(status, bottom);
     setContentView(root);
     updateClock();
@@ -285,7 +332,7 @@ public class CloudFrameActivity extends Activity {
     LinearLayout box = corners.get(settings().optString(kind + "_position", fallback));
     if (box == null) box = corners.get(fallback);
     LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
-    p.bottomMargin = dp(10);
+    if (box.getChildCount() > 0) p.topMargin = rowGap;
     box.addView(card, p);
   }
 
@@ -319,7 +366,8 @@ public class CloudFrameActivity extends Activity {
             }));
     TextView title = label(month.format(DateTimeFormatter.ofPattern("MMMM yyyy")), 16);
     title.setGravity(Gravity.CENTER);
-    heading.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+    heading.setGravity(Gravity.CENTER_VERTICAL);
+    heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
     heading.addView(
         button(
             "›",
@@ -333,7 +381,7 @@ public class CloudFrameActivity extends Activity {
     for (String d : new String[] {"M", "T", "W", "T", "F", "S", "S"}) {
       TextView t = label(d, 11);
       t.setGravity(Gravity.CENTER);
-      week.addView(t, new LinearLayout.LayoutParams(0, dp(24), 1));
+      week.addView(t, new LinearLayout.LayoutParams(0, dp(22 * ts), 1));
     }
     monthGrid.addView(week);
     int offset = month.atDay(1).getDayOfWeek().getValue() - 1;
@@ -346,7 +394,7 @@ public class CloudFrameActivity extends Activity {
       int day = n - offset + 1;
       TextView t = label(day < 1 || day > month.lengthOfMonth() ? "" : String.valueOf(day), 13);
       t.setGravity(Gravity.CENTER);
-      week.addView(t, new LinearLayout.LayoutParams(0, dp(35), 1));
+      week.addView(t, new LinearLayout.LayoutParams(0, cellH > 0 ? cellH : dp(35), 1));
       if (day >= 1 && day <= month.lengthOfMonth()) {
         LocalDate value = month.atDay(day);
         t.setFocusable(true);
