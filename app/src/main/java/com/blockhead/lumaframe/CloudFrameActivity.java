@@ -194,6 +194,7 @@ public class CloudFrameActivity extends Activity {
     t.setText(s);
     t.setTextColor(Color.WHITE);
     t.setTextSize(size * ts);
+    t.setShadowLayer(dp(4), 0, dp(1), 0x99000000);
     t.setPadding(dp(3 * ts), dp(3 * ts), dp(3 * ts), dp(3 * ts));
     return t;
   }
@@ -234,6 +235,13 @@ public class CloudFrameActivity extends Activity {
     l.setPadding(dp(18 * ts), dp(14 * ts), dp(18 * ts), dp(14 * ts));
     l.setBackground(
         glass((float) Math.max(.15, Math.min(.95, settings().optDouble("glass_opacity", .65)))));
+    return l;
+  }
+
+  /** Same as card(), but transparent when the companion turned this widget's background off. */
+  private LinearLayout card(String widget) {
+    LinearLayout l = card();
+    if (!settings().optBoolean(widget + "_background", true)) l.setBackground(null);
     return l;
   }
 
@@ -292,7 +300,7 @@ public class CloudFrameActivity extends Activity {
       root.addView(welcome, center);
     } else {
       if (selected == null) selected = LocalDate.now(zone());
-      LinearLayout clockCard = card();
+      LinearLayout clockCard = card("clock");
       clock = label("", 58);
       clock.setTypeface(Typeface.create("sans-serif-light", 0));
       date = label("", 16);
@@ -306,7 +314,7 @@ public class CloudFrameActivity extends Activity {
       cellH =
           Math.max(
               dp(22), Math.min(dp(35 * ts), (cornerMaxH - dp(150 * ts)) / 6));
-      LinearLayout calendarCard = card();
+      LinearLayout calendarCard = card("calendar");
       monthGrid = column();
       calendarCard.addView(monthGrid);
       renderMonth();
