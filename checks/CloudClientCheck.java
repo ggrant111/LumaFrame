@@ -16,6 +16,9 @@ public class CloudClientCheck {
     if (!CloudClient.validateBase(" https://example.supabase.co/functions/v1/ ")
         .equals("https://example.supabase.co/functions/v1"))
       throw new AssertionError("Normalization");
+    if (!CloudClient.pairUrl("https://example.com/functions/v1", "ABCD-2345")
+        .equals("https://example.com/pair?code=ABCD2345"))
+      throw new AssertionError("Pair URL");
     reject("http://example.com/functions/v1");
     reject("https://user:password@example.com/functions/v1");
     reject("https://example.com/functions/v1?token=secret");
